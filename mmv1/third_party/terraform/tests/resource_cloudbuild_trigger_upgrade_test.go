@@ -36,7 +36,6 @@ func TestAccCloudBuildTrigger_migration(t *testing.T) {
 			{
 				ResourceName:      "google_cloudbuild_trigger.simple-trigger",
 				ImportState:       true,
-				ImportStateVerify: true,
 				ExternalProviders: oldVersion,
 			},
 			{
