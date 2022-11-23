@@ -35,8 +35,10 @@ import (
 )
 
 var testAccProviders map[string]*schema.Provider
+var testAccProviderFactories map[string]func() (*schema.Provider, error)
 <% unless version == 'ga' -%>
 var testAccProvidersOiCS map[string]*schema.Provider
+var testAccProviderFactoriesOiCS map[string]func() (*schema.Provider, error)
 <% end -%>
 var testAccProvider *schema.Provider
 
@@ -133,9 +135,15 @@ func init() {
 	testAccProviders = map[string]*schema.Provider{
 		"google": testAccProvider,
 	}
+	testAccProviderFactories = map[string]func()(*schema.Provider, error){
+		"google": func() (*schema.Provider, error) { return testAccProvider, nil },
+	}
 	<% else -%>
 	testAccProviders = map[string]*schema.Provider{
 		"google": testAccProvider,
+	}
+	testAccProviderFactories = map[string]func()(*schema.Provider, error){
+		"google": func() (*schema.Provider, error) { return testAccProvider, nil },
 	}
 
 	// The OiCS provider map is used to ensure that OiCS examples use `google-beta`
@@ -145,6 +153,11 @@ func init() {
 <%# Add a google-#{version} provider for each version that is supported by this version. This allows us to run google-beta tests within a google-alpha provider.  -%>
 <% Api::Product::Version::ORDER[1..Api::Product::Version::ORDER.index(version)].each do |aliased_version| -%>
 		"google-<%= aliased_version -%>": testAccProvider,
+<% end -%>
+    }
+	testAccProviderFactoriesOiCS = map[string]func()(*schema.Provider, error){
+<% Api::Product::Version::ORDER[1..Api::Product::Version::ORDER.index(version)].each do |aliased_version| -%>
+		"google-<%= aliased_version -%>": func() (*schema.Provider, error) { return testAccProvider, nil },
 <% end -%>
 	}
 	<% end -%>
@@ -287,7 +300,7 @@ func googleProviderConfig(t *testing.T) *Config {
 	return testAccProvider.Meta().(*Config)
 }
 
-func getTestAccProviders(testName string, c resource.TestCase) map[string]*schema.Provider {
+func getTestAccProviders(testName string, c resource.TestCase) map[string]func() (*schema.Provider, error) {
 	prov := Provider()
 	if isVcrEnabled() {
 		old := prov.ConfigureContextFunc
@@ -298,14 +311,20 @@ func getTestAccProviders(testName string, c resource.TestCase) map[string]*schem
 		log.Print("[DEBUG] VCR_PATH or VCR_MODE not set, skipping VCR")
 	}
 	var testProvider string
-	providerMapKeys := reflect.ValueOf(c.Providers).MapKeys()
+	var providerMapKeys []reflect.Value
+	if c.ProviderFactories != nil && len(c.ProviderFactories) != 0 {
+		providerMapKeys = reflect.ValueOf(c.ProviderFactories).MapKeys()
+	} else {
+		providerMapKeys = reflect.ValueOf(c.Providers).MapKeys()
+	}
+
 	if strings.Contains(providerMapKeys[0].String(), "google-beta") {
 		testProvider = "google-beta"
 	} else {
 		testProvider = "google"
 	}
-	return map[string]*schema.Provider{
-		testProvider: prov,
+	return map[string]func() (*schema.Provider, error){
+		testProvider: func() (*schema.Provider, error) { return prov, nil },
 	}
 }
 
@@ -320,7 +339,7 @@ func isVcrEnabled() bool {
 func vcrTest(t *testing.T, c resource.TestCase) {
 	if isVcrEnabled() {
 		providers := getTestAccProviders(t.Name(), c)
-		c.Providers = providers
+		c.ProviderFactories = providers
 		defer closeRecorder(t)
 	} else if isReleaseDiffEnabled() {
 		c = initializeReleaseDiffTest(c)
@@ -522,7 +541,7 @@ func TestAccProviderBasePath_setBasePath(t *testing.T) {
 
 	vcrTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		CheckDestroy: testAccCheckComputeAddressDestroyProducer(t),
 		Steps: []resource.TestStep{
 			{
@@ -542,7 +561,7 @@ func TestAccProviderBasePath_setInvalidBasePath(t *testing.T) {
 
 	vcrTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		CheckDestroy: testAccCheckComputeAddressDestroyProducer(t),
 		Steps: []resource.TestStep{
 			{
@@ -1081,10 +1100,10 @@ func initializeReleaseDiffTest(c resource.TestCase) resource.TestCase {
 	}
 
 	localProviderName := "google-local"
-	localProvider := map[string]*schema.Provider{
-		localProviderName: testAccProvider,
+	localProvider := map[string]func() (*schema.Provider, error){
+		localProviderName: func() (*schema.Provider, error) { return testAccProvider, nil },
 	}
-	c.Providers = localProvider
+	c.ProviderFactories = localProvider
 
 	var replacementSteps []resource.TestStep
 	for _, testStep := range c.Steps {
